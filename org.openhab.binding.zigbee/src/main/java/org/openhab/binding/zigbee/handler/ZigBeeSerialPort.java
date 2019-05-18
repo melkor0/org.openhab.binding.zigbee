@@ -11,7 +11,10 @@ package org.openhab.binding.zigbee.handler;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Enumeration;
+import java.util.Set;
 import java.util.TooManyListenersException;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,6 +96,8 @@ public class ZigBeeSerialPort implements ZigBeePort, SerialPortEventListener {
      */
     private final Object bufferSynchronisationObject = new Object();
 
+    private Set<String> portOpenRuntimeExcepionMessages = ConcurrentHashMap.newKeySet();
+
     /**
      * Constructor setting port name and baud rate.
      *
@@ -121,6 +126,15 @@ public class ZigBeeSerialPort implements ZigBeePort, SerialPortEventListener {
         try {
             logger.debug("Connecting to serial port [{}] at {} baud, flow control {}.", portName, baudRate,
                     flowControl);
+
+            // in some rare cases we have to check whether a port really exists, because if it doesn't the call to
+            // CommPortIdentifier#open will kill the whole JVM
+            Enumeration<?> portList = CommPortIdentifier.getPortIdentifiers();
+            if (!portList.hasMoreElements()) {
+                logger.debug("No communication ports found, cannot connect to [{}]", portName);
+                return false;
+            }
+
             try {
                 CommPortIdentifier portIdentifier = CommPortIdentifier.getPortIdentifier(portName);
                 CommPort commPort = portIdentifier.open("org.openhab.binding.zigbee", 100);
@@ -147,6 +161,7 @@ public class ZigBeeSerialPort implements ZigBeePort, SerialPortEventListener {
                 serialPort.notifyOnDataAvailable(true);
 
                 logger.debug("Serial port [{}] is initialized.", portName);
+                portOpenRuntimeExcepionMessages.clear();
             } catch (NoSuchPortException e) {
                 logger.error("Serial Error: Port {} does not exist.", portName);
                 return false;
@@ -158,6 +173,12 @@ public class ZigBeeSerialPort implements ZigBeePort, SerialPortEventListener {
                 return false;
             } catch (TooManyListenersException e) {
                 logger.error("Serial Error: Too many listeners on Port {}.", portName);
+                return false;
+            } catch (RuntimeException e) {
+                if (!portOpenRuntimeExcepionMessages.contains(e.getMessage())) {
+                    portOpenRuntimeExcepionMessages.add(e.getMessage());
+                    logger.error("Serial Error: Device cannot be opened on Port {}. Caused by {}", portName, e.getMessage());
+                }
                 return false;
             }
 
@@ -179,7 +200,6 @@ public class ZigBeeSerialPort implements ZigBeePort, SerialPortEventListener {
         try {
             if (serialPort != null) {
                 serialPort.removeEventListener();
-                serialPort.enableReceiveTimeout(1);
 
                 outputStream.flush();
 

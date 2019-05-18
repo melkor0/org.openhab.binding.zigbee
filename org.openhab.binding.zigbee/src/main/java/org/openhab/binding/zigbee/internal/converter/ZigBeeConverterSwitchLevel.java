@@ -8,6 +8,7 @@
  */
 package org.openhab.binding.zigbee.internal.converter;
 
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -23,6 +24,7 @@ import org.eclipse.smarthome.core.types.Command;
 import org.openhab.binding.zigbee.ZigBeeBindingConstants;
 import org.openhab.binding.zigbee.converter.ZigBeeBaseChannelConverter;
 import org.openhab.binding.zigbee.internal.converter.config.ZclLevelControlConfig;
+import org.openhab.binding.zigbee.internal.converter.config.ZclReportingConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,15 +45,68 @@ import com.zsmartsystems.zigbee.zcl.protocol.ZclClusterType;
  * @author Chris Jackson - Initial Contribution
  */
 public class ZigBeeConverterSwitchLevel extends ZigBeeBaseChannelConverter implements ZclAttributeListener {
-    private Logger logger = LoggerFactory.getLogger(ZigBeeConverterSwitchLevel.class);
+    private final Logger logger = LoggerFactory.getLogger(ZigBeeConverterSwitchLevel.class);
 
     private ZclOnOffCluster clusterOnOff;
     private ZclLevelControlCluster clusterLevelControl;
+
+    private ZclReportingConfig configReporting;
     private ZclLevelControlConfig configLevelControl;
 
     private final AtomicBoolean currentOnOffState = new AtomicBoolean(true);
 
     private PercentType lastLevel = PercentType.HUNDRED;
+
+    @Override
+    public boolean initializeDevice() {
+        ZclLevelControlCluster serverClusterLevelControl = (ZclLevelControlCluster) endpoint
+                .getInputCluster(ZclLevelControlCluster.CLUSTER_ID);
+        if (serverClusterLevelControl == null) {
+            logger.error("{}: Error opening device level controls", endpoint.getIeeeAddress());
+            return false;
+        }
+
+        ZclOnOffCluster serverClusterOnOff = (ZclOnOffCluster) endpoint.getInputCluster(ZclOnOffCluster.CLUSTER_ID);
+        if (serverClusterOnOff == null) {
+            logger.error("{}: Error opening device level controls", endpoint.getIeeeAddress());
+            return false;
+        }
+
+        try {
+            CommandResult bindResponse = bind(serverClusterLevelControl).get();
+            if (bindResponse.isSuccess()) {
+                // Configure reporting
+                CommandResult reportingResponse = serverClusterLevelControl
+                        .setCurrentLevelReporting(1, REPORTING_PERIOD_DEFAULT_MAX, 1).get();
+                handleReportingResponse(reportingResponse, POLLING_PERIOD_HIGH, REPORTING_PERIOD_DEFAULT_MAX);
+            } else {
+                pollingPeriod = POLLING_PERIOD_HIGH;
+                logger.debug("{}: Failed to bind level control cluster", endpoint.getIeeeAddress());
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            logger.error(String.format("%s: Exception setting level control reporting ", endpoint.getIeeeAddress()), e);
+            return false;
+        }
+
+        try {
+            CommandResult bindResponse = bind(serverClusterOnOff).get();
+            if (bindResponse.isSuccess()) {
+                // Configure reporting
+                CommandResult reportingResponse = serverClusterOnOff.setOnOffReporting(1, REPORTING_PERIOD_DEFAULT_MAX)
+                        .get();
+                handleReportingResponse(reportingResponse, POLLING_PERIOD_HIGH, REPORTING_PERIOD_DEFAULT_MAX);
+            } else {
+                pollingPeriod = POLLING_PERIOD_HIGH;
+                logger.debug("{}: Failed to bind on off control cluster", endpoint.getIeeeAddress());
+                return false;
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            logger.error(String.format("%s: Exception setting on off reporting ", endpoint.getIeeeAddress()), e);
+            return false;
+        }
+
+        return true;
+    }
 
     @Override
     public synchronized boolean initializeConverter() {
@@ -61,56 +116,28 @@ public class ZigBeeConverterSwitchLevel extends ZigBeeBaseChannelConverter imple
             return false;
         }
 
-        try {
-            CommandResult bindResponse = bind(clusterLevelControl).get();
-            if (bindResponse.isSuccess()) {
-                // Configure reporting
-                CommandResult reportingResponse = clusterLevelControl
-                        .setCurrentLevelReporting(1, REPORTING_PERIOD_DEFAULT_MAX, 1).get();
-                if (reportingResponse.isError()) {
-                    pollingPeriod = POLLING_PERIOD_HIGH;
-                }
-            } else {
-                pollingPeriod = POLLING_PERIOD_HIGH;
-                logger.debug("{}: Failed to bind level control cluster", endpoint.getIeeeAddress());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            logger.error(String.format("%s: Exception setting level control reporting ", endpoint.getIeeeAddress()), e);
-        }
-
         clusterOnOff = (ZclOnOffCluster) endpoint.getInputCluster(ZclOnOffCluster.CLUSTER_ID);
-        if (clusterOnOff != null) {
-            try {
-                CommandResult bindResponse = bind(clusterOnOff).get();
-                if (bindResponse.isSuccess()) {
-                    // Configure reporting
-                    CommandResult reportingResponse = clusterOnOff.setOnOffReporting(1, REPORTING_PERIOD_DEFAULT_MAX)
-                            .get();
-                    if (reportingResponse.isError()) {
-                        pollingPeriod = POLLING_PERIOD_HIGH;
-                    }
-                } else {
-                    pollingPeriod = POLLING_PERIOD_HIGH;
-                }
-            } catch (InterruptedException | ExecutionException e) {
-                logger.error(String.format("%s: Exception setting on off reporting ", endpoint.getIeeeAddress()), e);
-            }
-
-            // Set the currentOnOffState to ON. This will ensure that we only ignore levelControl reports AFTER we have
-            // really received an OFF report, thus confirming ON_OFF reporting is working
-            currentOnOffState.set(true);
-
-            // Add a listener
-            clusterOnOff.addAttributeListener(this);
+        if (clusterOnOff == null) {
+            logger.error("{}: Error opening device level controls", endpoint.getIeeeAddress());
+            return false;
         }
 
-        // Add a listener
+        // Add a listeners
+        clusterOnOff.addAttributeListener(this);
         clusterLevelControl.addAttributeListener(this);
 
+        // Set the currentOnOffState to ON. This will ensure that we only ignore levelControl reports AFTER we have
+        // really received an OFF report, thus confirming ON_OFF reporting is working
+        currentOnOffState.set(true);
+
         // Create a configuration handler and get the available options
+        configReporting = new ZclReportingConfig();
         configLevelControl = new ZclLevelControlConfig();
         configLevelControl.initialize(clusterLevelControl);
-        configOptions = configLevelControl.getConfiguration();
+
+        configOptions = new ArrayList<>();
+        configOptions.addAll(configReporting.getConfiguration());
+        configOptions.addAll(configLevelControl.getConfiguration());
 
         return true;
     }
@@ -121,6 +148,11 @@ public class ZigBeeConverterSwitchLevel extends ZigBeeBaseChannelConverter imple
         if (clusterOnOff != null) {
             clusterOnOff.removeAttributeListener(this);
         }
+    }
+
+    @Override
+    public int getPollingPeriod() {
+        return configReporting.getPollingPeriod();
     }
 
     @Override
@@ -199,6 +231,7 @@ public class ZigBeeConverterSwitchLevel extends ZigBeeBaseChannelConverter imple
     @Override
     public void updateConfiguration(@NonNull Configuration currentConfiguration,
             Map<String, Object> updatedParameters) {
+        configReporting.updateConfiguration(currentConfiguration, updatedParameters);
         configLevelControl.updateConfiguration(currentConfiguration, updatedParameters);
     }
 

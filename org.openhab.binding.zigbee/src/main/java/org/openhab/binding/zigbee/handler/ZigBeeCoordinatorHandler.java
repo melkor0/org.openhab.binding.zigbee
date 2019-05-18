@@ -11,6 +11,7 @@ package org.openhab.binding.zigbee.handler;
 import static org.openhab.binding.zigbee.ZigBeeBindingConstants.*;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -19,6 +20,8 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -120,11 +123,18 @@ public abstract class ZigBeeCoordinatorHandler extends BaseBridgeHandler
 
     private volatile boolean bridgeRemoved = false;
 
+    private ScheduledFuture<?> reconnectPollingTimer;
+    private ScheduledExecutorService reconnectPollingScheduler;
+    private final Object reconnectLock = new Object();
+    private boolean currentReconnectAttemptFinished = false;
+
     /**
      * Default ZigBeeAlliance09 link key
      */
     private final static ZigBeeKey KEY_ZIGBEE_ALLIANCE_O9 = new ZigBeeKey(new int[] { 0x5A, 0x69, 0x67, 0x42, 0x65,
             0x65, 0x41, 0x6C, 0x6C, 0x69, 0x61, 0x6E, 0x63, 0x65, 0x30, 0x39 });
+
+    private static final long RECONNECT_RATE = 5;
 
     public ZigBeeCoordinatorHandler(Bridge coordinator) {
         super(coordinator);
@@ -273,6 +283,8 @@ public abstract class ZigBeeCoordinatorHandler extends BaseBridgeHandler
         }
 
         logger.debug("Link key final array {}", linkKey);
+
+        reconnectPollingScheduler = Executors.newSingleThreadScheduledExecutor();
     }
 
     @Override
@@ -292,6 +304,11 @@ public abstract class ZigBeeCoordinatorHandler extends BaseBridgeHandler
         // If we have scheduled tasks, stop them
         if (restartJob != null) {
             restartJob.cancel(true);
+        }
+
+        // shutdown reconnect task
+        if (reconnectPollingTimer != null) {
+            reconnectPollingTimer.cancel(true);
         }
 
         if (networkManager != null) {
@@ -359,8 +376,10 @@ public abstract class ZigBeeCoordinatorHandler extends BaseBridgeHandler
 
     /**
      * Initialise the ZigBee network
+     *
+     * synchronized to avoid executing this if a reconnect is still in progress
      */
-    private void initialiseZigBee() {
+    private synchronized void initialiseZigBee() {
         logger.debug("Initialising ZigBee coordinator");
 
         String networkId = getThing().getUID().toString().replaceAll(":", "_");
@@ -483,6 +502,50 @@ public abstract class ZigBeeCoordinatorHandler extends BaseBridgeHandler
             restartJob = null;
             initialiseZigBee();
         }, 1, TimeUnit.SECONDS);
+    }
+
+    private void startReconnectJobIfNotRunning() {
+        if (reconnectPollingTimer != null) {
+            return;
+        }
+
+        reconnectPollingTimer = reconnectPollingScheduler.scheduleWithFixedDelay(new Runnable() {
+            @Override
+            public void run() {
+                ZigBeeTransportState state = networkManager.getNetworkState();
+                if (state == ZigBeeTransportState.ONLINE || state == ZigBeeTransportState.INITIALISING) {
+                    return;
+                }
+
+                // close everything that has been started prior to initializing the serial port
+                if (restartJob != null) {
+                    restartJob.cancel(true);
+                }
+                // especially shutdown the port
+                networkManager.shutdown();
+
+                synchronized (reconnectLock) {
+                    currentReconnectAttemptFinished = false;
+                }
+
+                // Initialize the network again
+                initialiseZigBee();
+
+                waitForReconnectAttemptToFinish();
+            }
+
+            private void waitForReconnectAttemptToFinish() {
+                synchronized (reconnectLock) {
+                    try {
+                        while (!currentReconnectAttemptFinished) {
+                            reconnectLock.wait();
+                        }
+                    } catch (InterruptedException e) {
+                        // thread may be killed if callback reports that we are connected again
+                    }
+                }
+            }
+        }, 1, RECONNECT_RATE, TimeUnit.SECONDS);
     }
 
     @Override
@@ -804,12 +867,47 @@ public abstract class ZigBeeCoordinatorHandler extends BaseBridgeHandler
                 break;
             case ONLINE:
                 updateStatus(ThingStatus.ONLINE);
+                if (reconnectPollingTimer != null) {
+                    reconnectPollingTimer.cancel(true);
+                    reconnectPollingTimer = null;
+                }
                 break;
             case OFFLINE:
+                Bridge bridge = getThing();
+
+                // do not try to reconnect if there is a firmware update in progress
+                if (bridge.getStatus() == ThingStatus.OFFLINE
+                        && bridge.getStatusInfo().getStatusDetail() == ThingStatusDetail.FIRMWARE_UPDATING) {
+                    break;
+                }
+                
+                
+                // - Do not set the status to OFFLINE when the bridge is in one of these statuses. According to the
+                // documentation https://www.eclipse.org/smarthome/documentation/concepts/things.html#status-transitions
+                // the thing must not change from these statuses to OFFLINE
+                // - Do not try to reconnect if the bridge is being removed.
+                if (Arrays.asList(ThingStatus.UNINITIALIZED, ThingStatus.REMOVING, ThingStatus.REMOVED)
+                        .contains(bridge.getStatus())) {
+                    break;
+                }
+                
                 updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR);
+                startReconnectJobIfNotRunning();
+
                 break;
             default:
                 break;
+        }
+
+        if (state != ZigBeeTransportState.INITIALISING && state != ZigBeeTransportState.UNINITIALISED) {
+            notifyReconnectJobAboutFinishedInitialization();
+        }
+    }
+
+    private void notifyReconnectJobAboutFinishedInitialization() {
+        synchronized (reconnectLock) {
+            currentReconnectAttemptFinished = true;
+            reconnectLock.notifyAll();
         }
     }
 

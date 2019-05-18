@@ -44,9 +44,38 @@ public class ZigBeeConverterMeasurementPower extends ZigBeeBaseChannelConverter 
     private Integer multiplier;
 
     @Override
-    public boolean initializeConverter() {
+    public boolean initializeDevice() {
         logger.debug("{}: Initialising electrical measurement cluster", endpoint.getIeeeAddress());
 
+        ZclElectricalMeasurementCluster serverClusterMeasurement = (ZclElectricalMeasurementCluster) endpoint
+                .getInputCluster(ZclElectricalMeasurementCluster.CLUSTER_ID);
+        if (serverClusterMeasurement == null) {
+            logger.error("{}: Error opening electrical measurement cluster", endpoint.getIeeeAddress());
+            return false;
+        }
+
+        try {
+            CommandResult bindResponse = bind(serverClusterMeasurement).get();
+            if (bindResponse.isSuccess()) {
+                ZclAttribute attribute = serverClusterMeasurement
+                        .getAttribute(ZclElectricalMeasurementCluster.ATTR_ACTIVEPOWER);
+                // Configure reporting - no faster than once per second - no slower than 2 hours.
+                CommandResult reportingResponse = serverClusterMeasurement
+                        .setReporting(attribute, 3, REPORTING_PERIOD_DEFAULT_MAX, 1).get();
+                handleReportingResponse(reportingResponse, POLLING_PERIOD_HIGH, REPORTING_PERIOD_DEFAULT_MAX);
+            } else {
+                pollingPeriod = POLLING_PERIOD_HIGH;
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            logger.error("{}: Exception setting reporting ", endpoint.getIeeeAddress(), e);
+            return false;
+        }
+
+        return true;
+    }
+
+    @Override
+    public boolean initializeConverter() {
         clusterMeasurement = (ZclElectricalMeasurementCluster) endpoint
                 .getInputCluster(ZclElectricalMeasurementCluster.CLUSTER_ID);
         if (clusterMeasurement == null) {
@@ -54,34 +83,10 @@ public class ZigBeeConverterMeasurementPower extends ZigBeeBaseChannelConverter 
             return false;
         }
 
-        try {
-            CommandResult bindResponse = bind(clusterMeasurement).get();
-            if (bindResponse.isSuccess()) {
-                ZclAttribute attribute = clusterMeasurement
-                        .getAttribute(ZclElectricalMeasurementCluster.ATTR_ACTIVEPOWER);
-                // Configure reporting - no faster than once per second - no slower than 10 minutes.
-                CommandResult reportingResponse = clusterMeasurement
-                        .setReporting(attribute, 3, REPORTING_PERIOD_DEFAULT_MAX, 1).get();
-                if (reportingResponse.isError()) {
-                    pollingPeriod = POLLING_PERIOD_HIGH;
-                }
-            } else {
-                pollingPeriod = POLLING_PERIOD_HIGH;
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            logger.error("{}: Exception setting reporting ", endpoint.getIeeeAddress(), e);
-        }
-
-        divisor = clusterMeasurement.getAcPowerDivisor(Long.MAX_VALUE);
-        multiplier = clusterMeasurement.getAcPowerMultiplier(Long.MAX_VALUE);
-        if (divisor == null || multiplier == null) {
-            divisor = 1;
-            multiplier = 1;
-        }
+        determineDivisorAndMultiplier(clusterMeasurement);
 
         // Add a listener, then request the status
         clusterMeasurement.addAttributeListener(this);
-
         return true;
     }
 
@@ -94,7 +99,7 @@ public class ZigBeeConverterMeasurementPower extends ZigBeeBaseChannelConverter 
 
     @Override
     public void handleRefresh() {
-        clusterMeasurement.getTotalActivePower(0);
+        clusterMeasurement.getActivePower(0);
     }
 
     @Override
@@ -145,4 +150,14 @@ public class ZigBeeConverterMeasurementPower extends ZigBeeBaseChannelConverter 
             }
         }
     }
+
+    private void determineDivisorAndMultiplier(ZclElectricalMeasurementCluster serverClusterMeasurement) {
+        divisor = serverClusterMeasurement.getAcPowerDivisor(Long.MAX_VALUE);
+        multiplier = serverClusterMeasurement.getAcPowerMultiplier(Long.MAX_VALUE);
+        if (divisor == null || multiplier == null) {
+            divisor = 1;
+            multiplier = 1;
+        }
+    }
+
 }

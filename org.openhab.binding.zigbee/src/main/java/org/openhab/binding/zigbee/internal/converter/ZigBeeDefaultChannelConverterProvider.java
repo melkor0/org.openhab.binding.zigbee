@@ -15,7 +15,9 @@ import org.eclipse.smarthome.core.thing.DefaultSystemChannelTypeProvider;
 import org.eclipse.smarthome.core.thing.type.ChannelTypeUID;
 import org.openhab.binding.zigbee.ZigBeeBindingConstants;
 import org.openhab.binding.zigbee.converter.ZigBeeBaseChannelConverter;
+import org.openhab.binding.zigbee.converter.ZigBeeChannelConverterFactory;
 import org.openhab.binding.zigbee.converter.ZigBeeChannelConverterProvider;
+import org.openhab.binding.zigbee.internal.converter.warningdevice.ZigBeeConverterWarningDevice;
 import org.osgi.service.component.annotations.Component;
 
 /**
@@ -43,6 +45,8 @@ public final class ZigBeeDefaultChannelConverterProvider implements ZigBeeChanne
         channelMap.put(ZigBeeBindingConstants.CHANNEL_IAS_MOTIONPRESENCE, ZigBeeConverterIasMotionPresence.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_IAS_STANDARDCIESYSTEM, ZigBeeConverterIasCieSystem.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_IAS_WATERSENSOR, ZigBeeConverterIasWaterSensor.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_IAS_MOVEMENTSENSOR, ZigBeeConverterIasMovement.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_IAS_VIBRATIONSENSOR, ZigBeeConverterIasVibration.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_IAS_LOWBATTERY, ZigBeeConverterIasLowBattery.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_IAS_TAMPER, ZigBeeConverterIasTamper.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_ILLUMINANCE_VALUE, ZigBeeConverterIlluminance.class);
@@ -53,12 +57,28 @@ public final class ZigBeeDefaultChannelConverterProvider implements ZigBeeChanne
         channelMap.put(ZigBeeBindingConstants.CHANNEL_PRESSURE_VALUE, ZigBeeConverterAtmosphericPressure.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_SWITCH_ONOFF, ZigBeeConverterSwitchOnoff.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_SWITCH_LEVEL, ZigBeeConverterSwitchLevel.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_WARNING_DEVICE, ZigBeeConverterWarningDevice.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_TEMPERATURE_VALUE, ZigBeeConverterTemperature.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_ELECTRICAL_RMSVOLTAGE,
                 ZigBeeConverterMeasurementRmsVoltage.class);
         channelMap.put(ZigBeeBindingConstants.CHANNEL_ELECTRICAL_RMSCURRENT,
                 ZigBeeConverterMeasurementRmsCurrent.class);
         channelMap.put(DefaultSystemChannelTypeProvider.SYSTEM_BUTTON.getUID(), ZigBeeConverterGenericButton.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_THERMOSTAT_LOCALTEMPERATURE,
+                ZigBeeConverterThermostatLocalTemperature.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_THERMOSTAT_OUTDOORTEMPERATURE,
+                ZigBeeConverterThermostatOutdoorTemperature.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_THERMOSTAT_OCCUPIEDCOOLING,
+                ZigBeeConverterThermostatOccupiedCooling.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_THERMOSTAT_OCCUPIEDHEATING,
+                ZigBeeConverterThermostatOccupiedHeating.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_THERMOSTAT_UNOCCUPIEDCOOLING,
+                ZigBeeConverterThermostatUnoccupiedCooling.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_THERMOSTAT_UNOCCUPIEDHEATING,
+                ZigBeeConverterThermostatUnoccupiedHeating.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_THERMOSTAT_RUNNINGMODE,
+                ZigBeeConverterThermostatRunningMode.class);
+        channelMap.put(ZigBeeBindingConstants.CHANNEL_THERMOSTAT_SYSTEMMODE, ZigBeeConverterThermostatSystemMode.class);
     }
 
     @Override

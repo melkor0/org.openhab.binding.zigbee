@@ -18,8 +18,9 @@ import org.eclipse.smarthome.core.thing.binding.ThingHandler;
 import org.eclipse.smarthome.core.thing.binding.ThingHandlerFactory;
 import org.eclipse.smarthome.core.thing.type.DynamicStateDescriptionProvider;
 import org.openhab.binding.zigbee.ZigBeeBindingConstants;
+import org.openhab.binding.zigbee.converter.ZigBeeChannelConverterFactory;
 import org.openhab.binding.zigbee.handler.ZigBeeThingHandler;
-import org.openhab.binding.zigbee.internal.converter.ZigBeeChannelConverterFactory;
+import org.openhab.binding.zigbee.handler.ZigbeeIsAliveTracker;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 
@@ -34,9 +35,10 @@ import org.osgi.service.component.annotations.Reference;
 @Component(immediate = true, service = { ThingHandlerFactory.class })
 public class ZigBeeHandlerFactory extends BaseThingHandlerFactory {
 
-    private ZigBeeChannelConverterFactory zigbeeChannelConverterFactory;
-
     private final ZigBeeThingTypeMatcher matcher = new ZigBeeThingTypeMatcher();
+
+    private ZigBeeChannelConverterFactory zigbeeChannelConverterFactory;
+    private ZigbeeIsAliveTracker zigbeeIsAliveTracker;
 
     @Override
     public boolean supportsThingType(ThingTypeUID thingTypeUID) {
@@ -54,7 +56,7 @@ public class ZigBeeHandlerFactory extends BaseThingHandlerFactory {
             return null;
         }
 
-        ZigBeeThingHandler handler = new ZigBeeThingHandler(thing, zigbeeChannelConverterFactory);
+        ZigBeeThingHandler handler = new ZigBeeThingHandler(thing, zigbeeChannelConverterFactory, zigbeeIsAliveTracker);
         bundleContext.registerService(ConfigDescriptionProvider.class.getName(), handler,
                 new Hashtable<String, Object>());
         bundleContext.registerService(DynamicStateDescriptionProvider.class.getName(), handler,
@@ -70,5 +72,14 @@ public class ZigBeeHandlerFactory extends BaseThingHandlerFactory {
 
     protected void unsetZigBeeChannelConverterFactory(ZigBeeChannelConverterFactory zigbeeChannelConverterFactory) {
         this.zigbeeChannelConverterFactory = null;
+    }
+
+    @Reference
+    protected void setZigbeeIsAliveTracker(ZigbeeIsAliveTracker zigbeeIsAliveTracker) {
+        this.zigbeeIsAliveTracker = zigbeeIsAliveTracker;
+    }
+
+    protected void unsetZigbeeIsAliveTracker(ZigbeeIsAliveTracker zigbeeIsAliveTracker) {
+        this.zigbeeIsAliveTracker = null;
     }
 }
